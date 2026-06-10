@@ -13,7 +13,11 @@
 // callbacks before module globals, leaving solver handles dangling.
 #pragma once
 
-#include <torch/torch.h>
+// We use <torch/extension.h> (not <torch/torch.h>) to keep the include
+// graph small and avoid MSVC's std::-ambiguity errors in torch's
+// dynamo / compiled_autograd headers -- this is a binding-only library
+// and never references autograd::Function classes.
+#include <torch/extension.h>
 #include <amgx_c.h>
 
 #include <memory>

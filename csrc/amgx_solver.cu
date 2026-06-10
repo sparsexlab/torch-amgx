@@ -6,8 +6,6 @@
 // host round-trip.
 #include "amgx_solver.h"
 
-#include <torch/cuda.h>
-
 #include <atomic>
 #include <cstdio>
 #include <mutex>
