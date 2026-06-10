@@ -5,7 +5,7 @@ A **PyTorch-native** binding for [NVIDIA AmgX](https://github.com/NVIDIA/AMGX) â
 This package is **not a fork of `pyamgx`**. `pyamgx` is a numpy-shaped Cython wrapper that round-trips every tensor through host memory + scipy. `torch-amgx` is built from scratch as a PyTorch C++ extension:
 
 * **Zero-copy**: torch CUDA tensors are passed directly to AmgX via `data_ptr()`. No numpy, no scipy.
-* **Autograd-native**: `torch_amgx.solve(A, b)` registers as a torch op with backward (adjoint solve via conjugate-transpose).
+* **Binding-only**: torch-amgx is the thin binding layer (PyTorch tensors <-> AmgX C API). Autograd (adjoint solve via conjugate transpose) lives in callers like `torch-sla` -- keeping that concern out of this repo means `torch-amgx` stays minimal and reusable for non-`torch-sla` consumers.
 * **CUDA stream-aware**: respects `torch.cuda.current_stream()`.
 * **Type-safe config**: `Config` is a frozen dataclass, not a printf-style string.
 * **Clean lifecycle**: RAII via pybind11; no `STATUS_STACK_BUFFER_OVERRUN` at shutdown.
@@ -34,7 +34,7 @@ A_csr_indptr, A_csr_indices, A_csr_values = ...  # all torch cuda tensors
 shape = (n, n)
 b = torch.randn(n, device="cuda", dtype=torch.float64)
 
-# One-shot solve (autograd-aware)
+# One-shot forward solve (no autograd -- see torch-sla for the autograd-wrapped variant)
 x = torch_amgx.solve_csr(A_csr_indptr, A_csr_indices, A_csr_values, shape, b)
 
 # Reusable solver (one setup, many RHS)
@@ -64,6 +64,8 @@ For raw printf-style AmgX config string control, pass `Config(amgx_config_str=".
 from torch_sla import solve
 x = solve(A, b, backend="amgx")     # routes through torch_amgx
 ```
+
+`torch-sla` wraps `torch_amgx.solve_csr` in its own `torch.autograd.Function`, providing forward + backward (adjoint solve via the conjugate transpose). This keeps the binding here small (just tensors in / out) and the autograd math in one place.
 
 ## Build from source
 

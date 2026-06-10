@@ -1,4 +1,9 @@
-"""torch-amgx Python facade -- dataclass-based config + high-level Solver."""
+"""torch-amgx Python facade -- dataclass-based config + high-level Solver.
+
+Note: torch-amgx is the binding layer only. To use it with autograd,
+wrap the forward solve in your own torch.autograd.Function (this is
+what torch-sla does in its amgx backend).
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
