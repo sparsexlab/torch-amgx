@@ -63,15 +63,29 @@ extension = CUDAExtension(
     include_dirs=[str(_inc), "csrc"],
     library_dirs=[str(_libdir)],
     libraries=[_libname],
-    extra_compile_args={
-        "cxx": ["-O3", "-std=c++17"] if os.name != "nt"
-        else ["/O2", "/std:c++17"],
-        "nvcc": [
-            "-O3",
-            "--use_fast_math",
-            "-Xcompiler", "-fPIC",
-        ] if os.name != "nt" else ["-O3", "--use_fast_math"],
-    },
+    extra_compile_args=(
+        {
+            # POSIX (Linux WSL etc.)
+            "cxx": ["-O3", "-std=c++17"],
+            "nvcc": ["-O3", "--use_fast_math", "-Xcompiler", "-fPIC"],
+        }
+        if os.name != "nt" else
+        {
+            # MSVC: /permissive- enforces strict standards conformance,
+            # which torch 2.11's compiled_autograd.h requires to dodge
+            # the C2872 'std': ambiguous-symbol error in MSVC's default
+            # permissive mode. /Zc:__cplusplus exposes the real
+            # __cplusplus macro so torch's header conditionals pick the
+            # C++17 path.
+            "cxx": ["/O2", "/std:c++17", "/permissive-", "/Zc:__cplusplus",
+                    "/EHsc"],
+            # nvcc -Xcompiler passes flags through to cl.exe
+            "nvcc": ["-O3", "--use_fast_math",
+                     "-Xcompiler", "/permissive-",
+                     "-Xcompiler", "/Zc:__cplusplus",
+                     "-Xcompiler", "/EHsc"],
+        }
+    ),
 )
 
 
