@@ -1,0 +1,3 @@
+[submodule "third_party/AMGX"]
+	path = third_party/AMGX
+	url = https://github.com/NVIDIA/AMGX.git

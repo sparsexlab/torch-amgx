@@ -1,0 +1,51 @@
+[build-system]
+requires = [
+    "setuptools>=61.0",
+    "wheel",
+    "torch>=2.4.0",
+    "pybind11>=2.12",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "torch-amgx"
+version = "0.1.0"
+description = "PyTorch-native binding for NVIDIA AmgX (GPU AMG + Krylov sparse solvers)"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "sparsexlab"},
+]
+keywords = ["pytorch", "sparse", "amgx", "amg", "gpu", "cuda",
+            "iterative-solver", "multigrid"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: C++",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "scipy", "numpy"]
+
+[project.urls]
+Homepage = "https://github.com/sparsexlab/torch-amgx"
+Repository = "https://github.com/sparsexlab/torch-amgx"
+Issues = "https://github.com/sparsexlab/torch-amgx/issues"
+
+# We don't (yet) ship a configurable cibuildwheel matrix here; the
+# wheel CI in .github/workflows/wheels.yml drives the actual build.
+[tool.setuptools]
+packages = ["torch_amgx"]

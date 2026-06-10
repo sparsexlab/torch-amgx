@@ -1,0 +1,24 @@
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.so
+*.pyd
+*.dll
+*.dylib
+*.lib
+__pycache__/
+*.pyc
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# AmgX vendored install dir created by scripts/build_amgx.sh
+build/amgx/
