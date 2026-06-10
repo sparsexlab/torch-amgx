@@ -26,8 +26,12 @@ std::mutex        g_init_mutex;
 // AmgX's printf-style error callback. We discard noise from the library
 // itself (which already prints to stderr) and surface the message in the
 // next exception we throw.
+//
+// Note: AmgX expects ``void (*)(const char*, int)`` -- no AMGX_API on
+// the definition (the macro expands to __declspec(dllimport) on
+// Windows, which the compiler refuses on a function *body*).
 char g_last_error_msg[1024] = {0};
-void AMGX_API amgx_print_callback(const char* msg, int /*length*/) {
+void amgx_print_callback(const char* msg, int /*length*/) {
     std::snprintf(g_last_error_msg, sizeof(g_last_error_msg), "%s", msg);
 }
 
@@ -44,13 +48,19 @@ void check_amgx(AMGX_RC rc, const char* what) {
     throw std::runtime_error(oss.str());
 }
 
-// Map torch dtypes to AmgX mode strings. AmgX modes encode (matrix,
-// vector, mat-precision, vec-precision, index-precision) in a single
-// string. We restrict to dDDI (double-double-index32) and dFFI for now;
-// adding complex modes is a straight extension.
-const char* mode_for_dtype(torch::ScalarType dtype) {
-    if (dtype == torch::kFloat64) return "dDDI";
-    if (dtype == torch::kFloat32) return "dFFI";
+// Map torch dtypes to AmgX mode enum values. AmgX modes encode (host,
+// device, matrix-precision, vector-precision, index-precision) into a
+// single int constant. We restrict to dDDI (device-double-double-int32)
+// and dFFI (device-float-float-int32) for now -- adding complex modes
+// is a straight extension once the underlying AmgX C API stabilises
+// them.
+//
+// We do NOT use ``AMGX_mode_from_str`` -- that helper isn't in the
+// public 2.5+ AmgX C API. The enum constants in amgx_c.h are the
+// supported way.
+AMGX_Mode mode_for_dtype(torch::ScalarType dtype) {
+    if (dtype == torch::kFloat64) return AMGX_mode_dDDI;
+    if (dtype == torch::kFloat32) return AMGX_mode_dFFI;
     std::ostringstream oss;
     oss << "torch-amgx: unsupported dtype " << dtype
         << "; expected float32 or float64";
@@ -155,18 +165,16 @@ void AmgXSolver::setup_csr(const torch::Tensor& indptr,
 
     int64_t nnz = indices32.numel();
 
-    const char* mode = mode_for_dtype(values.scalar_type());
+    AMGX_Mode mode = mode_for_dtype(values.scalar_type());
 
     // (Re)create the matrix and solver handles each time setup is called
     // so we don't carry stale state. Destroy current ones first.
     if (solver_) { AMGX_solver_destroy(solver_); solver_ = nullptr; }
     if (matrix_) { AMGX_matrix_destroy(matrix_); matrix_ = nullptr; }
 
-    check_amgx(AMGX_matrix_create(&matrix_, resources_,
-                                  AMGX_mode_from_str(mode)),
+    check_amgx(AMGX_matrix_create(&matrix_, resources_, mode),
                "AMGX_matrix_create");
-    check_amgx(AMGX_solver_create(&solver_, resources_,
-                                  AMGX_mode_from_str(mode), config_),
+    check_amgx(AMGX_solver_create(&solver_, resources_, mode, config_),
                "AMGX_solver_create");
 
     // Upload CSR using the device-pointer variant -- zero host copy.
@@ -201,15 +209,15 @@ void AmgXSolver::solve_into(const torch::Tensor& b, torch::Tensor& x) {
     TORCH_CHECK(b.numel() == x.numel(),
                 "b and x must have the same length");
 
-    const char* mode = mode_for_dtype(b.scalar_type());
+    AMGX_Mode mode = mode_for_dtype(b.scalar_type());
 
     AMGX_vector_handle b_vec = nullptr;
     AMGX_vector_handle x_vec = nullptr;
     check_amgx(
-        AMGX_vector_create(&b_vec, resources_, AMGX_mode_from_str(mode)),
+        AMGX_vector_create(&b_vec, resources_, mode),
         "AMGX_vector_create(b)");
     check_amgx(
-        AMGX_vector_create(&x_vec, resources_, AMGX_mode_from_str(mode)),
+        AMGX_vector_create(&x_vec, resources_, mode),
         "AMGX_vector_create(x)");
 
     try {
