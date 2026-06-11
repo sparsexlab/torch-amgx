@@ -69,4 +69,4 @@ __all__ = [
     "is_available",
     "amgx_version",
 ]
-__version__ = "0.1.0"
+__version__ = "0.1.0a1"

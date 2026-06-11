@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "torch-amgx"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "PyTorch-native binding for NVIDIA AmgX (GPU AMG + Krylov sparse solvers)"
 readme = "README.md"
 license = {file = "LICENSE"}
