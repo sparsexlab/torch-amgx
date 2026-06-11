@@ -27,7 +27,11 @@ cmake -S "${AMGX_SRC}" -B "${BUILD_DIR}" \
     -DAMGX_NO_RPATH=ON
 
 echo "=== Building AmgX (this is the long step, ~30 min) ==="
-cmake --build "${BUILD_DIR}" --config Release --parallel
+# Cap parallelism to avoid OOM on memory-constrained boxes (WSL2 caps at
+# ~8 GB by default; nvcc + multi-arch fat-binary compilation can easily
+# blow past that with unlimited -j). Users with more RAM can override.
+PARALLEL="${CMAKE_PARALLEL:-2}"
+cmake --build "${BUILD_DIR}" --config Release --parallel "${PARALLEL}"
 
 echo "=== Installing AmgX to ${BUILD_DIR}/install ==="
 cmake --install "${BUILD_DIR}" --config Release
