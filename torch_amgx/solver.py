@@ -55,6 +55,41 @@ def amgx_version() -> str:
 MethodName = Literal["auto", "amg", "pcg", "cg", "pbicgstab", "bicgstab",
                      "fgmres", "gmres"]
 
+# Preconditioner choices. The names follow AmgX's internal vocabulary so
+# users coming from the AmgX docs / config JSON files don't have to learn
+# a second naming convention.
+#
+# - ``"amg"``                    classical AMG, single V-cycle (current default)
+# - ``"jacobi_l1"``              row-l1-norm scaled Jacobi (Anzt 2015)
+# - ``"block_jacobi"``           dense block-Jacobi
+# - ``"multicolor_gs"``          graph-colored parallel Gauss-Seidel
+# - ``"multicolor_dilu"``        diagonally-incomplete LU with multi-coloring
+# - ``"multicolor_ilu"``         multi-color ILU(0). DILU is usually preferable
+# - ``"chebyshev"``              polynomial Chebyshev (no setup, good for SPD)
+# - ``"polynomial"``             Neumann polynomial preconditioner
+# - ``"kaczmarz"``               classic row-projection
+# - ``"none"``                   no preconditioner (identity)
+PreconditionerName = Literal[
+    "amg", "jacobi_l1", "block_jacobi",
+    "multicolor_gs", "multicolor_dilu", "multicolor_ilu",
+    "chebyshev", "polynomial", "kaczmarz", "none",
+]
+
+# Map our Python-level name to (AmgX scope tag, AmgX solver-type token,
+# scope-local config block). Scope tag is the bracket-name AmgX uses to
+# attach key/value settings to that preconditioner instance.
+_PRECONDITIONER_REGISTRY = {
+    "jacobi_l1":     ("jac",  "JACOBI_L1",       ""),
+    "block_jacobi":  ("bjac", "BLOCK_JACOBI",    ""),
+    "multicolor_gs":   ("mcgs", "MULTICOLOR_GS",   ""),
+    "multicolor_dilu": ("dilu", "MULTICOLOR_DILU", ""),
+    "multicolor_ilu":  ("ilu",  "MULTICOLOR_ILU",  ""),
+    "chebyshev":     ("cheb", "CHEBYSHEV_POLY",  "cheb:chebyshev_polynomial_order=4,"),
+    "polynomial":    ("poly", "POLYNOMIAL",      ""),
+    "kaczmarz":      ("kac",  "KACZMARZ",        ""),
+    "none":          ("noop", "NOSOLVER",        ""),
+}
+
 
 @dataclass(frozen=True)
 class Config:
@@ -66,9 +101,11 @@ class Config:
     Examples
     --------
     >>> Config(method="pbicgstab", tol=1e-8, maxiter=200)
+    >>> Config(method="pcg", preconditioner="multicolor_dilu")
     >>> Config(amgx_config_str="config_version=2,solver(main)=AMG,...")
     """
     method: MethodName = "auto"
+    preconditioner: PreconditionerName = "amg"
     tol: float = 1e-8
     maxiter: int = 200
     presweeps: int = 1
@@ -83,6 +120,9 @@ class Config:
         method = "pbicgstab" if self.method == "auto" else self.method
         method = method.lower()
 
+        # Standalone AMG ignores ``preconditioner`` (AMG is itself the
+        # solver, not its preconditioner). Same for the ``none`` case
+        # used to short-circuit a Krylov solver into unpreconditioned.
         if method == "amg":
             outer_block = (
                 "solver(main)=AMG,"
@@ -109,7 +149,8 @@ class Config:
                 f"auto, amg, cg, pcg, bicgstab, pbicgstab, gmres, fgmres."
             )
         outer = outer_solver_map[method]
-        return (
+
+        outer_block = (
             "config_version=2,"
             f"solver(main)={outer},"
             f"main:max_iters={self.maxiter},"
@@ -118,12 +159,28 @@ class Config:
             "main:norm=L2,"
             "main:monitor_residual=1,"
             "main:print_solve_stats=0,"
-            "main:preconditioner(amg)=AMG,"
-            "amg:max_iters=1,"
-            "amg:cycle=V,"
-            f"amg:presweeps={self.presweeps},"
-            f"amg:postsweeps={self.postsweeps}"
         )
+
+        pc = self.preconditioner.lower() if self.preconditioner else "amg"
+        if pc == "amg":
+            return outer_block + (
+                "main:preconditioner(amg)=AMG,"
+                "amg:max_iters=1,"
+                "amg:cycle=V,"
+                f"amg:presweeps={self.presweeps},"
+                f"amg:postsweeps={self.postsweeps}"
+            )
+        if pc not in _PRECONDITIONER_REGISTRY:
+            raise ValueError(
+                f"Unknown preconditioner {pc!r}; expected one of "
+                f"{['amg'] + sorted(_PRECONDITIONER_REGISTRY)}."
+            )
+        scope, kind, extra = _PRECONDITIONER_REGISTRY[pc]
+        return (
+            outer_block
+            + f"main:preconditioner({scope})={kind},"
+            + extra.rstrip(",")
+        ).rstrip(",")
 
 
 @dataclass

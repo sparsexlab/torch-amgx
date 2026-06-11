@@ -86,3 +86,32 @@ def test_reusable_solver_amortises_setup():
         b = (A @ x_ref).detach()
         x = solver.solve(b)
         assert ((x - x_ref).norm() / x_ref.norm()).item() < 1e-6
+
+
+@pytest.mark.parametrize("preconditioner", [
+    "jacobi_l1", "block_jacobi", "multicolor_dilu", "chebyshev",
+])
+def test_non_amg_preconditioner_converges(preconditioner):
+    """Smoke each non-default preconditioner choice end-to-end on the
+    2D Poisson stencil; convergence rate varies but all of these must
+    drive a 32x32 SPD system below 1e-4 within 1000 PCG iterations."""
+    device = torch.device("cuda", 0)
+    indptr, indices, values, shape = _poisson_2d_csr(32, device)
+    solver = torch_amgx.Solver(
+        torch_amgx.Config(
+            method="pcg",
+            preconditioner=preconditioner,
+            tol=1e-8,
+            maxiter=1000,
+        ),
+        device=device,
+    )
+    solver.setup_csr(indptr, indices, values, shape[0])
+
+    A = torch.sparse_csr_tensor(indptr, indices, values, shape)
+    torch.manual_seed(0)
+    x_ref = torch.randn(shape[0], device=device, dtype=torch.float64)
+    b = (A @ x_ref).detach()
+    x = solver.solve(b)
+    rel = ((x - x_ref).norm() / x_ref.norm()).item()
+    assert rel < 1e-4, f"{preconditioner!r} stalled: rel-err {rel:.2e}"
