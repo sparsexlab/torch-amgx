@@ -20,7 +20,11 @@ jobs:
       matrix:
         os: [ubuntu-22.04, windows-2022]
         python: ["3.10", "3.11", "3.12"]
-        cuda: ["12.4", "12.8"]
+        # cu12.4 covers torch 2.4-2.7; cu12.6 covers 2.8+. cu12.8 is
+        # Blackwell-ready but unavailable in Jimver action; will reopen
+        # when a newer cuda-toolkit action lands or we switch to NVIDIA's
+        # official setup action.
+        cuda: ["12.4", "12.6"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,10 +36,22 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
+      # Windows: load MSVC env (cl.exe) so nvcc can find the host
+      # compiler. Without this CMake fails at "CMakeCUDACompilerId.cu"
+      # with "Cannot find compiler 'cl.exe' in PATH".
+      - name: Setup MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       # --- CUDA Toolkit ---------------------------------------------- #
+      # Bumped Jimver action 0.2.16 -> 0.2.21 (latest 2026-Q1 release;
+      # ships cu12.4 + cu12.6 reliably; older 0.2.16 had a transient
+      # apt sudo-100 flake on Ubuntu).
       - name: Install CUDA toolkit ${{ matrix.cuda }} (Linux)
         if: runner.os == 'Linux'
-        uses: Jimver/cuda-toolkit@v0.2.16
+        uses: Jimver/cuda-toolkit@v0.2.21
         with:
           cuda: ${{ matrix.cuda }}.0
           method: network
@@ -43,7 +59,7 @@ jobs:
 
       - name: Install CUDA toolkit ${{ matrix.cuda }} (Windows)
         if: runner.os == 'Windows'
-        uses: Jimver/cuda-toolkit@v0.2.16
+        uses: Jimver/cuda-toolkit@v0.2.21
         with:
           cuda: ${{ matrix.cuda }}.0
           method: network
