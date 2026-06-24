@@ -23,13 +23,28 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, windows-2022]
-        python: ["3.10", "3.11", "3.12"]
-        # cu12.4 covers torch 2.4-2.6; cu12.6 covers torch 2.6+. The CUDA
+        # torch ships cp313 wheels now, so 3.13 is built too.
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        # cu12.4 covers torch 2.4-2.6; cu12.6 covers torch 2.6+; cu12.8 is
+        # the first toolkit with Blackwell (sm_100/sm_120) codegen. The CUDA
         # toolkit installed here only has to match the torch build we link
         # against at compile time (torch's cpp_extension hard-fails on a
         # toolkit/torch CUDA-major mismatch), so torch below is pinned to
         # the matching CUDA index-url.
-        cuda: ["12.4", "12.6"]
+        cuda: ["12.4", "12.6", "12.8"]
+        # Per-cuda fat-binary arch list (consumed by scripts/build_amgx.sh
+        # and the Windows CMake step via the CUDA_ARCH env var). 70=Volta,
+        # 80=Ampere, 89=Ada, 90=Hopper, 100/120=Blackwell. nvcc only knows
+        # the Blackwell SMs from cu12.8, so the <=12.6 builds instead append
+        # the virtual PTX of their top arch (90-virtual) so those wheels
+        # JIT-forward onto Blackwell at runtime.
+        include:
+          - cuda: "12.4"
+            cuda_arch: "70;80;89;90;90-virtual"
+          - cuda: "12.6"
+            cuda_arch: "70;80;89;90;90-virtual"
+          - cuda: "12.8"
+            cuda_arch: "70;80;89;90;100;120"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -74,12 +89,14 @@ jobs:
           method: local      # full toolkit: guarantees cublas/cusparse/cusolver dev libs
 
       # --- Build AmgX ------------------------------------------------ #
-      # CUDA_ARCH is the fat-binary arch list. 70=Volta, 80=Ampere,
-      # 89=Ada, 90=Hopper. (120/Blackwell needs cu12.8+, not built here.)
+      # CUDA_ARCH is the fat-binary arch list, picked per-cuda by the matrix
+      # include: above. 70=Volta, 80=Ampere, 89=Ada, 90=Hopper,
+      # 100/120=Blackwell (cu12.8 only); the <=12.6 builds carry 90-virtual
+      # PTX so they JIT-forward onto Blackwell.
       - name: Build AmgX (Linux)
         if: runner.os == 'Linux'
         env:
-          CUDA_ARCH: "70;80;89;90"
+          CUDA_ARCH: ${{ matrix.cuda_arch }}
           CMAKE_PARALLEL: "4"
         run: bash scripts/build_amgx.sh
 
@@ -88,7 +105,7 @@ jobs:
         shell: pwsh
         env:
           # CUDA_PATH is exported by the cuda-toolkit action above.
-          CUDA_ARCH: "70;80;89;90"
+          CUDA_ARCH: ${{ matrix.cuda_arch }}
         run: |
           # scripts/build_amgx.ps1 hard-codes a local tb16 dev box (VS
           # BuildTools + Miniforge paths) and is kept only for that box.
