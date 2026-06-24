@@ -196,6 +196,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           mkdir -p dist-repaired
+          # auditwheel locates the to-bundle libs via LD_LIBRARY_PATH; point it
+          # at the AmgX install so it can find libamgxsh.so to vendor in.
+          export LD_LIBRARY_PATH="${GITHUB_WORKSPACE}/build/amgx/install/lib:${LD_LIBRARY_PATH:-}"
           for whl in dist/*.whl; do
             # The extension is compiled with the ubuntu-22.04 runner's system
             # GCC, which links glibc 2.35 versioned symbols. Those are too
