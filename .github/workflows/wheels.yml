@@ -183,6 +183,13 @@ jobs:
           # TORCH_CUDA_ARCH_LIST makes torch skip GPU probing and emit
           # PTX/SASS for the intended arches (matches the AmgX cuda_arch row).
           TORCH_CUDA_ARCH_LIST: ${{ matrix.torch_arch }}
+          # Windows: msvc-dev-cmd activates the VC env, but torch's
+          # cpp_extension._check_abi() then hard-raises
+          #   "the VC environment is activated but DISTUTILS_USE_SDK is not set"
+          # (it refuses to re-activate the env itself). Exporting
+          # DISTUTILS_USE_SDK=1 tells setuptools the SDK/VC env is already
+          # live, which satisfies the check. Harmless on Linux (ignored).
+          DISTUTILS_USE_SDK: 1
         run: python -m build --wheel --no-isolation
 
       - name: Bundle AmgX library into wheel (Linux)
@@ -190,8 +197,15 @@ jobs:
         run: |
           mkdir -p dist-repaired
           for whl in dist/*.whl; do
+            # The extension is compiled with the ubuntu-22.04 runner's system
+            # GCC, which links glibc 2.35 versioned symbols. Those are too
+            # recent for manylinux_2_28 (glibc 2.28), so auditwheel rejected
+            # the repair with "presence of too-recent versioned symbols".
+            # ubuntu-22.04 ships glibc 2.35, so target manylinux_2_35 (the
+            # platform actually built here) instead. AmgX's libamgxsh.so is
+            # still bundled; only torch/CUDA runtime libs stay excluded.
             auditwheel repair \
-              --plat manylinux_2_28_x86_64 \
+              --plat manylinux_2_35_x86_64 \
               --exclude "libtorch*.so" \
               --exclude "libc10*.so" \
               --exclude "libcudart*.so*" \
