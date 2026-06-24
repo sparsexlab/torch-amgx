@@ -30,8 +30,11 @@ echo "=== Building AmgX (this is the long step, ~30 min) ==="
 # Cap parallelism to avoid OOM on memory-constrained boxes (WSL2 caps at
 # ~8 GB by default; nvcc + multi-arch fat-binary compilation can easily
 # blow past that with unlimited -j). Users with more RAM can override.
+# Build only the shared lib target (amgxsh); we don't need the static lib,
+# tests, or examples, and skipping them avoids pulling in extra CUDA
+# targets and roughly halves the build time.
 PARALLEL="${CMAKE_PARALLEL:-2}"
-cmake --build "${BUILD_DIR}" --config Release --parallel "${PARALLEL}"
+cmake --build "${BUILD_DIR}" --config Release --target amgxsh --parallel "${PARALLEL}"
 
 echo "=== Installing AmgX to ${BUILD_DIR}/install ==="
 cmake --install "${BUILD_DIR}" --config Release

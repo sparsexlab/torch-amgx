@@ -1,12 +1,16 @@
 name: Build wheels
 
+# torch-amgx binds NVIDIA AmgX, which is CUDA-only. "Cross-platform" here
+# therefore means Linux x86_64 + Windows x64, both with CUDA. macOS and AMD
+# are intentionally NOT targeted (no CUDA there).
+
 on:
   push:
-    tags: ["v*"]            # triggered on every version tag
+    tags: ["v*"]            # tagging v* builds + publishes to the GH Release
   workflow_dispatch:        # plus manual trigger from the GH UI
     inputs:
       publish:
-        description: "Upload wheels to PyPI (requires Trusted Publisher)"
+        description: "Upload built wheels to the GitHub Release for this ref"
         required: false
         type: boolean
         default: false
@@ -20,10 +24,11 @@ jobs:
       matrix:
         os: [ubuntu-22.04, windows-2022]
         python: ["3.10", "3.11", "3.12"]
-        # cu12.4 covers torch 2.4-2.7; cu12.6 covers 2.8+. cu12.8 is
-        # Blackwell-ready but unavailable in Jimver action; will reopen
-        # when a newer cuda-toolkit action lands or we switch to NVIDIA's
-        # official setup action.
+        # cu12.4 covers torch 2.4-2.6; cu12.6 covers torch 2.6+. The CUDA
+        # toolkit installed here only has to match the torch build we link
+        # against at compile time (torch's cpp_extension hard-fails on a
+        # toolkit/torch CUDA-major mismatch), so torch below is pinned to
+        # the matching CUDA index-url.
         cuda: ["12.4", "12.6"]
     steps:
       - name: Checkout
@@ -36,9 +41,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      # Windows: load MSVC env (cl.exe) so nvcc can find the host
-      # compiler. Without this CMake fails at "CMakeCUDACompilerId.cu"
-      # with "Cannot find compiler 'cl.exe' in PATH".
+      # Windows: load MSVC env (cl.exe) so nvcc can find the host compiler.
+      # Without this CMake fails at "CMakeCUDACompilerId.cu" with
+      # "Cannot find compiler 'cl.exe' in PATH".
       - name: Setup MSVC environment (Windows)
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
@@ -46,62 +51,102 @@ jobs:
           arch: x64
 
       # --- CUDA Toolkit ---------------------------------------------- #
-      # Bumped Jimver action 0.2.16 -> 0.2.21 (latest 2026-Q1 release;
-      # ships cu12.4 + cu12.6 reliably; older 0.2.16 had a transient
-      # apt sudo-100 flake on Ubuntu).
+      # AmgX's CMake links the IMPORTED targets CUDA::cublas, CUDA::cusparse
+      # and CUDA::cusolver. find_package(CUDAToolkit) only creates those
+      # targets when both the runtime libs AND the dev import libs are
+      # present, so we install the -dev components too (Linux) / the full
+      # toolkit (Windows, where the network sub-package split for the dev
+      # import libs is unreliable and previously broke with
+      # "Target ... CUDA::cublas ... but the target was not found").
       - name: Install CUDA toolkit ${{ matrix.cuda }} (Linux)
         if: runner.os == 'Linux'
         uses: Jimver/cuda-toolkit@v0.2.21
         with:
           cuda: ${{ matrix.cuda }}.0
           method: network
-          sub-packages: '["nvcc", "cudart", "cudart-dev", "cusparse", "cusparse-dev", "cublas", "cublas-dev"]'
+          sub-packages: '["nvcc", "cudart", "cudart-dev", "cusparse", "cusparse-dev", "cublas", "cublas-dev", "cusolver", "cusolver-dev"]'
 
       - name: Install CUDA toolkit ${{ matrix.cuda }} (Windows)
         if: runner.os == 'Windows'
         uses: Jimver/cuda-toolkit@v0.2.21
         with:
           cuda: ${{ matrix.cuda }}.0
-          method: network
-          sub-packages: '["nvcc", "cudart", "cusparse", "cublas", "visual_studio_integration"]'
+          method: local      # full toolkit: guarantees cublas/cusparse/cusolver dev libs
 
       # --- Build AmgX ------------------------------------------------ #
+      # CUDA_ARCH is the fat-binary arch list. 70=Volta, 80=Ampere,
+      # 89=Ada, 90=Hopper. (120/Blackwell needs cu12.8+, not built here.)
       - name: Build AmgX (Linux)
         if: runner.os == 'Linux'
+        env:
+          CUDA_ARCH: "70;80;89;90"
+          CMAKE_PARALLEL: "4"
         run: bash scripts/build_amgx.sh
 
       - name: Build AmgX (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          # CUDA_PATH is exported by the cuda-toolkit action above.
+          CUDA_ARCH: "70;80;89;90"
         run: |
-          # The Windows build script reuses the same CMakeLists driven
-          # via PowerShell; mirror scripts/build_amgx.sh for Windows.
-          ./scripts/build_amgx.ps1
+          # scripts/build_amgx.ps1 hard-codes a local tb16 dev box (VS
+          # BuildTools + Miniforge paths) and is kept only for that box.
+          # On CI the MSVC env is already loaded by msvc-dev-cmd and CUDA
+          # by the cuda-toolkit action, so drive CMake directly here.
+          $install = "$pwd/build/amgx/install"
+          cmake -S third_party/AMGX -B build/amgx -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$install" `
+            -DCMAKE_CUDA_ARCHITECTURES="$env:CUDA_ARCH" `
+            -DCUDAToolkit_ROOT="$env:CUDA_PATH" `
+            -DAMGX_NO_RPATH=ON `
+            -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler"
+          if ($LASTEXITCODE -ne 0) { throw "AmgX CMake configure failed" }
+          cmake --build build/amgx --config Release --target amgxsh --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw "AmgX build failed" }
+          cmake --install build/amgx --config Release
+          if ($LASTEXITCODE -ne 0) { throw "AmgX install failed" }
 
       # --- Build wheel + bundle AmgX into it ------------------------- #
+      # torch MUST be installed from the CUDA-matched index-url. The plain
+      # "pip install torch" pulls whatever CUDA the latest torch ships with
+      # (currently cu13.0), and torch.utils.cpp_extension then hard-fails
+      # with "The detected CUDA version (12.6) mismatches the version that
+      # was used to compile PyTorch (13.0)". numpy is also required at
+      # build time (torch import warns + downstream breaks without it).
       - name: Install build tooling
+        shell: bash
         run: |
           python -m pip install --upgrade pip wheel build
-          pip install "torch>=2.4" pybind11
-          # Tools that bundle native shared libs into wheels:
+          CU_TAG="cu$(echo '${{ matrix.cuda }}' | tr -d '.')"   # 12.4 -> cu124
+          pip install --index-url "https://download.pytorch.org/whl/${CU_TAG}" torch
+          pip install numpy pybind11
           if [ "$RUNNER_OS" = "Linux" ]; then
             pip install auditwheel
           else
             pip install delvewheel
           fi
-        shell: bash
 
       - name: Build wheel
+        shell: bash
         env:
           AMGX_DIR: ${{ github.workspace }}/build/amgx/install
-        run: python -m build --wheel
+        run: python -m build --wheel --no-isolation
 
       - name: Bundle AmgX library into wheel (Linux)
         if: runner.os == 'Linux'
         run: |
+          mkdir -p dist-repaired
           for whl in dist/*.whl; do
             auditwheel repair \
               --plat manylinux_2_28_x86_64 \
+              --exclude "libtorch*.so" \
+              --exclude "libc10*.so" \
+              --exclude "libcudart*.so*" \
+              --exclude "libcublas*.so*" \
+              --exclude "libcusparse*.so*" \
+              --exclude "libcusolver*.so*" \
               -w dist-repaired \
               "$whl"
           done
@@ -116,6 +161,7 @@ jobs:
           Get-ChildItem dist/*.whl | ForEach-Object {
             delvewheel repair `
               --add-path "$env:AMGX_DIR/bin;$env:AMGX_DIR/lib" `
+              --no-dll "torch_cpu.dll;torch_cuda.dll;c10.dll;c10_cuda.dll" `
               -w dist-repaired `
               $_.FullName
           }
@@ -126,16 +172,16 @@ jobs:
           name: wheel-${{ matrix.os }}-py${{ matrix.python }}-cu${{ matrix.cuda }}
           path: dist-repaired/*.whl
 
+  # Publish to GitHub Releases (the maintainer has no PyPI access). Tagging
+  # v* builds all wheels above and attaches them to that tag's Release;
+  # users then `pip install <release-asset-url>`.
   publish:
-    name: Publish to PyPI
+    name: Publish wheels to GitHub Release
     needs: build_wheels
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    environment:
-      name: pypi
-      url: https://pypi.org/p/torch-amgx
     permissions:
-      id-token: write     # Trusted Publisher OIDC, no API token needed
+      contents: write     # required to create/update the Release + upload assets
     steps:
       - name: Download all wheels
         uses: actions/download-artifact@v4
@@ -143,5 +189,18 @@ jobs:
           pattern: wheel-*
           path: dist
           merge-multiple: true
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: List wheels
+        run: ls -la dist
+
+      - name: Upload wheels to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # On a tag push, attach to that tag's Release. On a manual
+          # dispatch, attach to a Release named after the branch/ref so the
+          # run still produces installable assets.
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('ci-{0}', github.ref_name) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('CI build ({0})', github.ref_name) }}
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          files: dist/*.whl
+          fail_on_unmatched_files: true

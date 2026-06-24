@@ -12,16 +12,35 @@ This package is **not a fork of `pyamgx`**. `pyamgx` is a numpy-shaped Cython wr
 
 ## Install
 
+`torch-amgx` is **not on PyPI**. Prebuilt wheels are published to
+[**GitHub Releases**](https://github.com/sparsexlab/torch-amgx/releases).
+Pick the wheel matching your OS / Python / CUDA and `pip install` its
+asset URL directly:
+
 ```bash
-pip install torch-amgx
+# Example: Linux x86_64, Python 3.11, CUDA 12.6
+pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a2/torch_amgx-0.1.0a2-cp311-cp311-manylinux_2_28_x86_64.whl
 ```
 
-Prebuilt wheels are published for:
+```bash
+# Example: Windows x64, Python 3.11, CUDA 12.6
+pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a2/torch_amgx-0.1.0a2-cp311-cp311-win_amd64.whl
+```
 
-* Linux x86_64, Python 3.10 / 3.11 / 3.12, CUDA 12.4 / 12.8
-* Windows x86_64, Python 3.10 / 3.11 / 3.12, CUDA 12.4 / 12.8
+Or download the wheel from the Releases page and `pip install ./<file>.whl`.
+Browse the full asset list at
+<https://github.com/sparsexlab/torch-amgx/releases/latest>.
 
-The AmgX shared library is bundled into the wheel (`auditwheel` / `delvewheel`) so no separate SDK install is required.
+Prebuilt wheels are published for (each as a CUDA-tagged build):
+
+* Linux x86_64, Python 3.10 / 3.11 / 3.12, CUDA 12.4 / 12.6
+* Windows x64, Python 3.10 / 3.11 / 3.12, CUDA 12.4 / 12.6
+
+> AmgX is **CUDA-only**, so there are no macOS or AMD/ROCm wheels.
+
+The AmgX shared library is bundled into the wheel (`auditwheel` /
+`delvewheel`) so no separate AmgX SDK install is required. You still need
+a matching NVIDIA driver and a `torch` build for the same CUDA series.
 
 ## Quick start
 
