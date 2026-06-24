@@ -69,17 +69,25 @@ jobs:
       # AmgX's CMake links the IMPORTED targets CUDA::cublas, CUDA::cusparse
       # and CUDA::cusolver. find_package(CUDAToolkit) only creates those
       # targets when both the runtime libs AND the dev import libs are
-      # present, so we install the -dev components too (Linux) / the full
-      # toolkit (Windows, where the network sub-package split for the dev
-      # import libs is unreliable and previously broke with
-      # "Target ... CUDA::cublas ... but the target was not found").
+      # present. We install the FULL toolkit on both platforms (method:
+      # local): the network sub-package split for the dev import libs is
+      # unreliable -- on Windows it previously broke with "Target ...
+      # CUDA::cublas ... but the target was not found", and on Linux the
+      # cherry-picked apt packages (cuda-cublas-12-8 / cuda-cusparse-12-8)
+      # simply do not exist for cu12.x ("Unable to locate package").
       - name: Install CUDA toolkit ${{ matrix.cuda }} (Linux)
         if: runner.os == 'Linux'
         uses: Jimver/cuda-toolkit@v0.2.21
         with:
           cuda: ${{ matrix.cuda }}.0
-          method: network
-          sub-packages: '["nvcc", "cudart", "cudart-dev", "cusparse", "cusparse-dev", "cublas", "cublas-dev"]'
+          method: local      # full toolkit: the network sub-package split
+                             # (cuda-cublas-12-8 / cuda-cusparse-12-8) does
+                             # not exist as apt packages for cu12.x, so the
+                             # cherry-picked install fails with "Unable to
+                             # locate package". local mirrors the Windows
+                             # step and guarantees the cublas/cusparse dev
+                             # import libs AmgX's find_package(CUDAToolkit)
+                             # needs (~3 GB download, but it works).
 
       - name: Install CUDA toolkit ${{ matrix.cuda }} (Windows)
         if: runner.os == 'Windows'
@@ -120,13 +128,17 @@ jobs:
             -DAMGX_NO_RPATH=ON `
             -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler"
           if ($LASTEXITCODE -ne 0) { throw "AmgX CMake configure failed" }
-          # Build BOTH the static (amgx) and shared (amgxsh) targets: AmgX's
-          # cmake_install.cmake installs the static amgx.lib too, so building
-          # only amgxsh makes `cmake --install` fail with "cannot find
-          # amgx.lib". setup.py links the shared import lib (amgxsh.lib) and
+          # Build the static (amgx) + shared (amgxsh) libs AND the tiny
+          # amgx_capi example. AmgX's cmake_install.cmake unconditionally
+          # installs all three (static amgx.lib, shared amgxsh, and the
+          # examples/amgx_capi[.exe]), so building only amgx+amgxsh makes
+          # `cmake --install` fail with "file INSTALL cannot find
+          # .../amgx_capi.exe". amgx_capi is a single small C file that links
+          # the already-built amgxsh -- it adds seconds, not the ~30 min the
+          # full example/test build would. setup.py links amgxsh.lib and
           # delvewheel bundles amgxsh.dll, so amgxsh is still what the wheel
-          # uses; amgx is built only to satisfy the install step.
-          cmake --build build/amgx --config Release --target amgx amgxsh --parallel 4
+          # uses; amgx + amgx_capi are built only to satisfy the install step.
+          cmake --build build/amgx --config Release --target amgx amgxsh amgx_capi --parallel 4
           if ($LASTEXITCODE -ne 0) { throw "AmgX build failed" }
           cmake --install build/amgx --config Release
           if ($LASTEXITCODE -ne 0) { throw "AmgX install failed" }

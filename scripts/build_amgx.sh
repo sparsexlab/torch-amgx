@@ -30,14 +30,18 @@ echo "=== Building AmgX (this is the long step, ~30 min) ==="
 # Cap parallelism to avoid OOM on memory-constrained boxes (WSL2 caps at
 # ~8 GB by default; nvcc + multi-arch fat-binary compilation can easily
 # blow past that with unlimited -j). Users with more RAM can override.
-# Build BOTH the static (amgx) and shared (amgxsh) targets. We only *use*
-# the shared lib (setup.py links amgxsh / libamgxsh.so), but AmgX's
-# cmake_install.cmake also installs the static amgx library, so building
-# only amgxsh makes the subsequent `cmake --install` fail with
-# "file INSTALL cannot find .../amgx.{lib,a}". Building amgx too keeps the
-# install step happy; tests/examples are still skipped.
+# Build the static (amgx) + shared (amgxsh) libs AND the tiny amgx_capi
+# example. We only *use* the shared lib (setup.py links amgxsh /
+# libamgxsh.so), but AmgX's cmake_install.cmake unconditionally installs
+# all three: the static amgx library, the shared amgxsh, and
+# examples/amgx_capi. Building only amgx+amgxsh makes the subsequent
+# `cmake --install` fail with "file INSTALL cannot find .../amgx.{lib,a}"
+# or ".../amgx_capi". amgx_capi is a single small C file that links the
+# already-built amgxsh, so it adds seconds rather than the ~30 min the
+# full example/test build would. The heavier example/test binaries are
+# still skipped.
 PARALLEL="${CMAKE_PARALLEL:-2}"
-cmake --build "${BUILD_DIR}" --config Release --target amgx amgxsh --parallel "${PARALLEL}"
+cmake --build "${BUILD_DIR}" --config Release --target amgx amgxsh amgx_capi --parallel "${PARALLEL}"
 
 echo "=== Installing AmgX to ${BUILD_DIR}/install ==="
 cmake --install "${BUILD_DIR}" --config Release
