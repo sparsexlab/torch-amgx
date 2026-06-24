@@ -39,12 +39,22 @@ jobs:
         # the virtual PTX of their top arch (90-virtual) so those wheels
         # JIT-forward onto Blackwell at runtime.
         include:
+          # cuda_arch  -> AmgX fat-binary list (nvcc/CMake `70;80;...` syntax)
+          # torch_arch -> torch's TORCH_CUDA_ARCH_LIST (semver, space-sep,
+          #               `+PTX` on the top virtual arch). Set on the "Build
+          #               wheel" step so torch.utils.cpp_extension skips GPU
+          #               probing (CI runners have no GPU -> device_count()==0
+          #               -> IndexError in _get_cuda_arch_flags). Must MATCH
+          #               the AmgX cuda_arch chosen for the same row.
           - cuda: "12.4"
             cuda_arch: "70;80;89;90;90-virtual"
+            torch_arch: "7.0 8.0 8.9 9.0+PTX"
           - cuda: "12.6"
             cuda_arch: "70;80;89;90;90-virtual"
+            torch_arch: "7.0 8.0 8.9 9.0+PTX"
           - cuda: "12.8"
             cuda_arch: "70;80;89;90;100;120"
+            torch_arch: "7.0 8.0 8.9 9.0 10.0 12.0"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -167,6 +177,12 @@ jobs:
         shell: bash
         env:
           AMGX_DIR: ${{ github.workspace }}/build/amgx/install
+          # CI runners have no GPU, so torch.cuda.device_count()==0 and
+          # torch.utils.cpp_extension._get_cuda_arch_flags() indexes an empty
+          # arch list -> "IndexError: list index out of range". Setting
+          # TORCH_CUDA_ARCH_LIST makes torch skip GPU probing and emit
+          # PTX/SASS for the intended arches (matches the AmgX cuda_arch row).
+          TORCH_CUDA_ARCH_LIST: ${{ matrix.torch_arch }}
         run: python -m build --wheel --no-isolation
 
       - name: Bundle AmgX library into wheel (Linux)
