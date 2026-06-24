@@ -173,7 +173,10 @@ jobs:
             pip install delvewheel
           fi
 
-      - name: Build wheel
+      # Linux build runs in bash. On Linux, Git's coreutils `link` is not on
+      # PATH ahead of the toolchain, so the bash shell is fine here.
+      - name: Build wheel (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         env:
           AMGX_DIR: ${{ github.workspace }}/build/amgx/install
@@ -183,12 +186,28 @@ jobs:
           # TORCH_CUDA_ARCH_LIST makes torch skip GPU probing and emit
           # PTX/SASS for the intended arches (matches the AmgX cuda_arch row).
           TORCH_CUDA_ARCH_LIST: ${{ matrix.torch_arch }}
-          # Windows: msvc-dev-cmd activates the VC env, but torch's
+        run: python -m build --wheel --no-isolation
+
+      # Windows build MUST run in pwsh, NOT bash. The windows-2022 runner's
+      # `shell: bash` is Git Bash, whose C:\Program Files\Git\usr\bin\link.exe
+      # is GNU coreutils `link` (a hardlink tool), not MSVC's `link.exe`.
+      # Git's /usr/bin precedes the MSVC toolchain on PATH, so torch/CUDA's
+      # link step picks the wrong link.exe and fails with
+      #   error: command '...\Git\usr\bin\link.exe' failed with exit code 1
+      # Running in pwsh keeps Git's /usr/bin off PATH, so the MSVC link.exe
+      # loaded by ilammy/msvc-dev-cmd is used (same as "Build AmgX (Windows)").
+      - name: Build wheel (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          AMGX_DIR: ${{ github.workspace }}/build/amgx/install
+          TORCH_CUDA_ARCH_LIST: ${{ matrix.torch_arch }}
+          # msvc-dev-cmd activates the VC env, but torch's
           # cpp_extension._check_abi() then hard-raises
           #   "the VC environment is activated but DISTUTILS_USE_SDK is not set"
-          # (it refuses to re-activate the env itself). Exporting
+          # (it refuses to re-activate the env itself). Setting
           # DISTUTILS_USE_SDK=1 tells setuptools the SDK/VC env is already
-          # live, which satisfies the check. Harmless on Linux (ignored).
+          # live, which satisfies the check.
           DISTUTILS_USE_SDK: 1
         run: python -m build --wheel --no-isolation
 
