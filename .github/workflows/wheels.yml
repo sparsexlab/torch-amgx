@@ -79,7 +79,7 @@ jobs:
         with:
           cuda: ${{ matrix.cuda }}.0
           method: network
-          sub-packages: '["nvcc", "cudart", "cudart-dev", "cusparse", "cusparse-dev", "cublas", "cublas-dev", "cusolver", "cusolver-dev"]'
+          sub-packages: '["nvcc", "cudart", "cudart-dev", "cusparse", "cusparse-dev", "cublas", "cublas-dev"]'
 
       - name: Install CUDA toolkit ${{ matrix.cuda }} (Windows)
         if: runner.os == 'Windows'
@@ -120,7 +120,13 @@ jobs:
             -DAMGX_NO_RPATH=ON `
             -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler"
           if ($LASTEXITCODE -ne 0) { throw "AmgX CMake configure failed" }
-          cmake --build build/amgx --config Release --target amgxsh --parallel 4
+          # Build BOTH the static (amgx) and shared (amgxsh) targets: AmgX's
+          # cmake_install.cmake installs the static amgx.lib too, so building
+          # only amgxsh makes `cmake --install` fail with "cannot find
+          # amgx.lib". setup.py links the shared import lib (amgxsh.lib) and
+          # delvewheel bundles amgxsh.dll, so amgxsh is still what the wheel
+          # uses; amgx is built only to satisfy the install step.
+          cmake --build build/amgx --config Release --target amgx amgxsh --parallel 4
           if ($LASTEXITCODE -ne 0) { throw "AmgX build failed" }
           cmake --install build/amgx --config Release
           if ($LASTEXITCODE -ne 0) { throw "AmgX install failed" }
