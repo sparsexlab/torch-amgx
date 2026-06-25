@@ -134,6 +134,7 @@ class Config:
                 f"main:presweeps={self.presweeps},"
                 f"main:postsweeps={self.postsweeps},"
                 "main:monitor_residual=1,"
+                "main:store_res_history=1,"
                 "main:print_solve_stats=0"
             )
             return "config_version=2," + outer_block

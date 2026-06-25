@@ -250,12 +250,19 @@ void AmgXSolver::solve_into(const torch::Tensor& b, torch::Tensor& x) {
 
         if (iters > 0) {
             // Final residual norm of the last iteration on the only
-            // block (block 0). Failure to fetch leaves the previous nan
-            // in place.
-            double rn = 0;
-            AMGX_RC rc =
-                AMGX_solver_get_iteration_residual(solver_, iters - 1, 0, &rn);
-            if (rc == AMGX_RC_OK) last_residual_ = rn;
+            // block (block 0). This is diagnostics only -- x has already
+            // been downloaded above -- so a failure here (e.g. AmgX raising
+            // "Residual history was not recorded" when store_res_history is
+            // off) must never abort an otherwise-successful solve. Swallow
+            // any error and leave the previous nan in place.
+            try {
+                double rn = 0;
+                AMGX_RC rc = AMGX_solver_get_iteration_residual(
+                    solver_, iters - 1, 0, &rn);
+                if (rc == AMGX_RC_OK) last_residual_ = rn;
+            } catch (...) {
+                // ignore -- diagnostics must not fail the solve
+            }
         }
     } catch (...) {
         AMGX_vector_destroy(b_vec);
