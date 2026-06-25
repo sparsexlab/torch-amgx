@@ -246,9 +246,16 @@ jobs:
         run: |
           mkdir dist-repaired
           Get-ChildItem dist/*.whl | ForEach-Object {
+            # Mirror the Linux auditwheel excludes: torch's own DLLs and the
+            # CUDA runtime DLLs must NOT be vendored (they ship with the user's
+            # torch / CUDA install). delvewheel's --exclude takes a single
+            # semicolon-separated list on Windows and supports the * wildcard;
+            # without these, delvewheel tries to locate torch_python.dll and
+            # dies with "Unable to find library: torch_python.dll".
+            # --add-path still points at the AmgX bin so amgxsh.dll IS bundled.
             delvewheel repair `
               --add-path "$env:AMGX_DIR/bin;$env:AMGX_DIR/lib" `
-              --no-dll "torch_cpu.dll;torch_cuda.dll;c10.dll;c10_cuda.dll" `
+              --exclude "torch_python.dll;torch.dll;torch_cpu.dll;torch_cuda.dll;c10.dll;c10_cuda.dll;fbgemm.dll;cudart64_*.dll;cublas64_*.dll;cublasLt64_*.dll;cusparse64_*.dll;cusolver64_*.dll;nvrtc*.dll" `
               -w dist-repaired `
               $_.FullName
           }
