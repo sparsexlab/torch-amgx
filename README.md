@@ -14,27 +14,38 @@ This package is **not a fork of `pyamgx`**. `pyamgx` is a numpy-shaped Cython wr
 
 `torch-amgx` is **not on PyPI**. Prebuilt wheels are published to
 [**GitHub Releases**](https://github.com/sparsexlab/torch-amgx/releases).
-Pick the wheel matching your OS / Python / CUDA and `pip install` its
-asset URL directly:
+
+Each `(os, python)` ships **three CUDA variants** — cu12.4 / cu12.6 / cu12.8.
+Because the binary is compiled against `torch`'s C++ ABI for a specific CUDA
+toolkit, you **must pick the wheel whose CUDA matches your installed
+`torch`'s CUDA** (check `python -c "import torch; print(torch.version.cuda)"`).
+Installing a mismatched wheel fails at *import* time with a torch ABI error
+(`ImportError: DLL load failed while importing _C` on Windows, or an
+undefined-symbol error on Linux).
+
+The CUDA variant is encoded in the wheel's **build tag** `0_cu124` /
+`0_cu126` / `0_cu128` (right after the version), e.g.
+`torch_amgx-<ver>-0_cu126-cp313-cp313-win_amd64.whl`. `pip install` its asset
+URL directly:
 
 ```bash
-# Example: Linux x86_64, Python 3.11, CUDA 12.6
-pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a2/torch_amgx-0.1.0a2-cp311-cp311-manylinux_2_28_x86_64.whl
+# Example: Linux x86_64, Python 3.11, torch built for CUDA 12.6 -> 0_cu126
+pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a11/torch_amgx-0.1.0a11-0_cu126-cp311-cp311-manylinux_2_35_x86_64.whl
 ```
 
 ```bash
-# Example: Windows x64, Python 3.11, CUDA 12.6
-pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a2/torch_amgx-0.1.0a2-cp311-cp311-win_amd64.whl
+# Example: Windows x64, Python 3.13, torch built for CUDA 12.4 -> 0_cu124
+pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a11/torch_amgx-0.1.0a11-0_cu124-cp313-cp313-win_amd64.whl
 ```
 
 Or download the wheel from the Releases page and `pip install ./<file>.whl`.
 Browse the full asset list at
 <https://github.com/sparsexlab/torch-amgx/releases/latest>.
 
-Prebuilt wheels are published for (each as a CUDA-tagged build):
+Prebuilt wheels are published (24 total = 4 py × 2 os × 3 cuda):
 
-* Linux x86_64, Python 3.10 / 3.11 / 3.12, CUDA 12.4 / 12.6
-* Windows x64, Python 3.10 / 3.11 / 3.12, CUDA 12.4 / 12.6
+* Linux x86_64, Python 3.10 / 3.11 / 3.12 / 3.13, CUDA 12.4 / 12.6 / 12.8
+* Windows x64, Python 3.10 / 3.11 / 3.12 / 3.13, CUDA 12.4 / 12.6 / 12.8
 
 > AmgX is **CUDA-only**, so there are no macOS or AMD/ROCm wheels.
 

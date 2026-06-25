@@ -237,6 +237,16 @@ jobs:
               -w dist-repaired \
               "$whl"
           done
+          # Stamp a per-CUDA PEP 427 build tag (0_cu124/0_cu126/0_cu128) into
+          # the wheel filename + WHEEL metadata. Without this, the cu12.4 /
+          # cu12.6 / cu12.8 builds for the same (os, py) share an identical
+          # filename and OVERWRITE each other as GitHub Release assets -- only
+          # the last survives, and installing it onto a host whose torch was
+          # built for a different CUDA fails at runtime with a torch C++ ABI
+          # mismatch. The tag makes all 3 CUDA wheels publish distinctly.
+          mkdir -p dist-final
+          python -m pip install --upgrade pip >/dev/null
+          python scripts/tag_wheel.py "${{ matrix.cuda }}" dist-repaired dist-final
 
       - name: Bundle AmgX library into wheel (Windows)
         if: runner.os == 'Windows'
@@ -259,12 +269,19 @@ jobs:
               -w dist-repaired `
               $_.FullName
           }
+          # Stamp a per-CUDA PEP 427 build tag (0_cu124/0_cu126/0_cu128) into
+          # the wheel filename + WHEEL metadata so the cu12.4 / cu12.6 / cu12.8
+          # builds for the same (os, py) don't share a filename and overwrite
+          # each other as GitHub Release assets (see the Linux step's note).
+          mkdir dist-final
+          python scripts/tag_wheel.py "${{ matrix.cuda }}" dist-repaired dist-final
+          if ($LASTEXITCODE -ne 0) { throw "tag_wheel failed" }
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.os }}-py${{ matrix.python }}-cu${{ matrix.cuda }}
-          path: dist-repaired/*.whl
+          path: dist-final/*.whl
 
   # Publish to GitHub Releases (the maintainer has no PyPI access). Tagging
   # v* builds all wheels above and attaches them to that tag's Release;
