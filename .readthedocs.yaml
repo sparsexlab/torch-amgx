@@ -1,0 +1,18 @@
+# Read the Docs configuration for torch-amgx.
+# https://docs.readthedocs.io/en/stable/config-file/v2.html
+#
+# The torch-amgx package contains a compiled CUDA/AmgX extension that cannot
+# be built on RTD's GPU-less builders. We therefore do NOT install the package
+# itself; instead conf.py puts the repo root on sys.path and mocks the native
+# ``torch_amgx._C`` extension so autodoc can import the pure-Python package.
+# We install torch-cpu only so torch type references resolve.
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.11"
+  commands:
+    - pip install torch --index-url https://download.pytorch.org/whl/cpu
+    - pip install sphinx furo
+    - python -m sphinx -b html docs/source $READTHEDOCS_OUTPUT/html

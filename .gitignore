@@ -22,3 +22,6 @@ htmlcov/
 
 # AmgX vendored install dir created by scripts/build_amgx.sh
 build/amgx/
+
+# Sphinx build output
+docs/build/
