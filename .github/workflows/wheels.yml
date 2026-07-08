@@ -22,39 +22,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-2022]
-        # torch ships cp313 wheels now, so 3.13 is built too.
-        python: ["3.10", "3.11", "3.12", "3.13"]
-        # cu12.4 covers torch 2.4-2.6; cu12.6 covers torch 2.6+; cu12.8 is
-        # the first toolkit with Blackwell (sm_100/sm_120) codegen. The CUDA
-        # toolkit installed here only has to match the torch build we link
-        # against at compile time (torch's cpp_extension hard-fails on a
-        # toolkit/torch CUDA-major mismatch), so torch below is pinned to
-        # the matching CUDA index-url.
-        cuda: ["12.4", "12.6", "12.8"]
-        # Per-cuda fat-binary arch list (consumed by scripts/build_amgx.sh
-        # and the Windows CMake step via the CUDA_ARCH env var). 70=Volta,
-        # 80=Ampere, 89=Ada, 90=Hopper, 100/120=Blackwell. nvcc only knows
-        # the Blackwell SMs from cu12.8, so the <=12.6 builds instead append
-        # the virtual PTX of their top arch (90-virtual) so those wheels
-        # JIT-forward onto Blackwell at runtime.
         include:
-          # cuda_arch  -> AmgX fat-binary list (nvcc/CMake `70;80;...` syntax)
-          # torch_arch -> torch's TORCH_CUDA_ARCH_LIST (semver, space-sep,
-          #               `+PTX` on the top virtual arch). Set on the "Build
-          #               wheel" step so torch.utils.cpp_extension skips GPU
-          #               probing (CI runners have no GPU -> device_count()==0
-          #               -> IndexError in _get_cuda_arch_flags). Must MATCH
-          #               the AmgX cuda_arch chosen for the same row.
-          - cuda: "12.4"
-            cuda_arch: "70;80;89;90;90-virtual"
-            torch_arch: "7.0 8.0 8.9 9.0+PTX"
-          - cuda: "12.6"
-            cuda_arch: "70;80;89;90;90-virtual"
-            torch_arch: "7.0 8.0 8.9 9.0+PTX"
-          - cuda: "12.8"
-            cuda_arch: "70;80;89;90;100;120"
-            torch_arch: "7.0 8.0 8.9 9.0 10.0 12.0"
+          - os: windows-2022
+            python: "3.12"
+            cuda: "13.0.2"
+            torch_cuda_tag: "cu130"
+            wheel_cuda_tag: "cu13"
+            cuda_arch: "75;80;89;90;100;120"
+            torch_arch: "7.5 8.0 8.9 9.0 10.0 12.0"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -87,9 +62,9 @@ jobs:
       # simply do not exist for cu12.x ("Unable to locate package").
       - name: Install CUDA toolkit ${{ matrix.cuda }} (Linux)
         if: runner.os == 'Linux'
-        uses: Jimver/cuda-toolkit@v0.2.21
+        uses: Jimver/cuda-toolkit@master
         with:
-          cuda: ${{ matrix.cuda }}.0
+          cuda: ${{ matrix.cuda }}
           method: local      # full toolkit: the network sub-package split
                              # (cuda-cublas-12-8 / cuda-cusparse-12-8) does
                              # not exist as apt packages for cu12.x, so the
@@ -101,9 +76,9 @@ jobs:
 
       - name: Install CUDA toolkit ${{ matrix.cuda }} (Windows)
         if: runner.os == 'Windows'
-        uses: Jimver/cuda-toolkit@v0.2.21
+        uses: Jimver/cuda-toolkit@master
         with:
-          cuda: ${{ matrix.cuda }}.0
+          cuda: ${{ matrix.cuda }}
           method: local      # full toolkit: guarantees cublas/cusparse/cusolver dev libs
 
       # --- Build AmgX ------------------------------------------------ #
@@ -129,12 +104,22 @@ jobs:
           # BuildTools + Miniforge paths) and is kept only for that box.
           # On CI the MSVC env is already loaded by msvc-dev-cmd and CUDA
           # by the cuda-toolkit action, so drive CMake directly here.
+          # CUDA 13.0 ships CCCL/Thrust headers that require C++17. AMGX
+          # currently flips its C++ standard only for CUDA >= 13.1, so patch
+          # the checked-out submodule in CI before configure.
+          (Get-Content third_party/AMGX/CMakeLists.txt) `
+            -replace 'VERSION_GREATER_EQUAL "13.1"', 'VERSION_GREATER_EQUAL "13.0"' |
+            Set-Content third_party/AMGX/CMakeLists.txt
           $install = "$pwd/build/amgx/install"
           cmake -S third_party/AMGX -B build/amgx -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$install" `
             -DCMAKE_CUDA_ARCHITECTURES="$env:CUDA_ARCH" `
             -DCUDAToolkit_ROOT="$env:CUDA_PATH" `
+            -DCMAKE_CXX_STANDARD=17 `
+            -DCMAKE_CUDA_STANDARD=17 `
+            -DCMAKE_CXX_STANDARD_REQUIRED=ON `
+            -DCMAKE_CUDA_STANDARD_REQUIRED=ON `
             -DAMGX_NO_RPATH=ON `
             -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler"
           if ($LASTEXITCODE -ne 0) { throw "AmgX CMake configure failed" }
@@ -164,7 +149,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip wheel build
-          CU_TAG="cu$(echo '${{ matrix.cuda }}' | tr -d '.')"   # 12.4 -> cu124
+          CU_TAG="${{ matrix.torch_cuda_tag }}"   # 12.4 -> cu124
           pip install --index-url "https://download.pytorch.org/whl/${CU_TAG}" torch
           pip install numpy pybind11
           if [ "$RUNNER_OS" = "Linux" ]; then
@@ -246,7 +231,7 @@ jobs:
           # mismatch. The tag makes all 3 CUDA wheels publish distinctly.
           mkdir -p dist-final
           python -m pip install --upgrade pip >/dev/null
-          python scripts/tag_wheel.py "${{ matrix.cuda }}" dist-repaired dist-final
+          python scripts/tag_wheel.py "${{ matrix.wheel_cuda_tag }}" dist-repaired dist-final
 
       - name: Bundle AmgX library into wheel (Windows)
         if: runner.os == 'Windows'
@@ -274,7 +259,7 @@ jobs:
           # builds for the same (os, py) don't share a filename and overwrite
           # each other as GitHub Release assets (see the Linux step's note).
           mkdir dist-final
-          python scripts/tag_wheel.py "${{ matrix.cuda }}" dist-repaired dist-final
+          python scripts/tag_wheel.py "${{ matrix.wheel_cuda_tag }}" dist-repaired dist-final
           if ($LASTEXITCODE -ne 0) { throw "tag_wheel failed" }
 
       - name: Upload wheel artifact

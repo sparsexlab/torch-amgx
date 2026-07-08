@@ -27,6 +27,10 @@ it is normalised to the build tag 0_cu<digits>.
 from __future__ import annotations
 
 import re
+import base64
+import csv
+import hashlib
+import io
 import shutil
 import sys
 import zipfile
@@ -66,6 +70,9 @@ def retag(whl: Path, build: str, out_dir: Path) -> Path:
 
 def _rewrite_build_in_wheel(whl: Path, build: str) -> None:
     tmp = whl.with_suffix(".whl.tmp")
+    wheel_record: tuple[str, bytes] | None = None
+    record_item: zipfile.ZipInfo | None = None
+    record_data: bytes | None = None
     with zipfile.ZipFile(whl) as zin, zipfile.ZipFile(
         tmp, "w", zipfile.ZIP_DEFLATED
     ) as zout:
@@ -78,8 +85,31 @@ def _rewrite_build_in_wheel(whl: Path, build: str) -> None:
                 else:
                     text = text.rstrip("\n") + f"\nBuild: {build}\n"
                 data = text.encode("utf-8")
+                wheel_record = (item.filename, data)
+            if item.filename.endswith(".dist-info/RECORD"):
+                record_item = item
+                record_data = data
+                continue
             zout.writestr(item, data)
+        if record_item is not None and record_data is not None:
+            zout.writestr(record_item, _rewrite_record(record_data, wheel_record))
     tmp.replace(whl)
+
+
+def _rewrite_record(record_data: bytes, wheel_record: tuple[str, bytes] | None) -> bytes:
+    if wheel_record is None:
+        return record_data
+    wheel_path, wheel_data = wheel_record
+    digest = base64.urlsafe_b64encode(hashlib.sha256(wheel_data).digest())
+    digest_text = "sha256=" + digest.rstrip(b"=").decode("ascii")
+    out = io.StringIO(newline="")
+    writer = csv.writer(out)
+    for row in csv.reader(io.StringIO(record_data.decode("utf-8"), newline="")):
+        if row and row[0] == wheel_path:
+            writer.writerow([row[0], digest_text, str(len(wheel_data))])
+        else:
+            writer.writerow(row)
+    return out.getvalue().encode("utf-8")
 
 
 def main(argv: list[str]) -> int:
