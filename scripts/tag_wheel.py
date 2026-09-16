@@ -11,18 +11,27 @@ Release -- only the last (cu12.8) survives, and installing it onto a host with
 e.g. torch 2.6.0+cu124 fails at runtime with a torch C++ ABI mismatch
 (ImportError: DLL load failed while importing _C).
 
+The tag also carries the *torch* version, because CUDA alone does not
+identify the ABI: the extension links torch's C++ ABI, which torch does not
+keep stable across minor releases, so a wheel built against torch 2.11 can
+fail to import on torch 2.10 with the same CUDA. The torch version is read
+from ``torch_amgx/_build_info.py`` *inside the wheel* (written by setup.py at
+build time) rather than passed in, so the tag cannot drift from what was
+actually compiled.
+
 A wheel filename is:
     {distribution}-{version}[-{build tag}]-{python}-{abi}-{platform}.whl
 PEP 427 requires the build tag to start with a digit, so we use a tag like
-    0_cu124 / 0_cu126 / 0_cu128
+    0_cu126_torch211
 which sorts/parses cleanly and is visible in the filename, e.g.
-    torch_amgx-0.1.0a11-0_cu126-cp313-cp313-win_amd64.whl
+    torch_amgx-0.1.0a2-0_cu126_torch211-cp313-cp313-win_amd64.whl
 
 Usage:
     python tag_wheel.py <cuda> <wheel-dir> [<out-dir>]
 
 <cuda> is the matrix CUDA value, with or without the dot ("12.6" or "cu126");
-it is normalised to the build tag 0_cu<digits>.
+it is normalised to 0_cu<digits>, and the torch part is appended if the wheel
+carries build info.
 """
 from __future__ import annotations
 
@@ -31,6 +40,7 @@ import shutil
 import sys
 import zipfile
 from pathlib import Path
+from typing import Optional
 
 WHEEL_RE = re.compile(
     r"^(?P<dist>.+?)-(?P<ver>.+?)(?:-(?P<build>\d[^-]*))?"
@@ -47,11 +57,42 @@ def cuda_to_build(cuda: str) -> str:
     return f"0_cu{digits}"
 
 
+def torch_tag(whl: Path) -> Optional[str]:
+    """Read the torch version the wheel was built against, as "torch211".
+
+    Reads ``torch_amgx/_build_info.py`` from inside the wheel; returns None if
+    it is absent, so a wheel built by an older setup.py still tags cleanly on
+    CUDA alone. The dot is dropped to match the ``cu128`` convention: torch
+    2.11 -> ``torch211``. That is ambiguous only for a minor version >= 100,
+    which does not exist.
+    """
+    with zipfile.ZipFile(whl) as z:
+        names = [n for n in z.namelist() if n.endswith("torch_amgx/_build_info.py")]
+        if not names:
+            return None
+        text = z.read(names[0]).decode("utf-8")
+    m = re.search(r"^TORCH_VERSION\s*=\s*['\"]([^'\"]+)", text, re.M)
+    if not m:
+        return None
+    # "2.11.0+cu128" -> major, minor
+    base = m.group(1).split("+")[0]
+    parts = base.split(".")
+    if len(parts) < 2:
+        return None
+    return f"torch{parts[0]}{parts[1]}"
+
+
 def retag(whl: Path, build: str, out_dir: Path) -> Path:
     m = WHEEL_RE.match(whl.name)
     if not m:
         raise SystemExit(f"unrecognised wheel name: {whl.name}")
     g = m.groupdict()
+    tt = torch_tag(whl)
+    if tt:
+        build = f"{build}_{tt}"
+    else:
+        print(f"  warning: {whl.name} carries no _build_info.py; "
+              f"tagging on CUDA alone, so the filename cannot promise a torch ABI")
     new_name = f"{g['dist']}-{g['ver']}-{build}-{g['py']}-{g['abi']}-{g['plat']}.whl"
     out_dir.mkdir(parents=True, exist_ok=True)
     dst = out_dir / new_name

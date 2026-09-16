@@ -16,27 +16,44 @@ This package is **not a fork of `pyamgx`**. `pyamgx` is a numpy-shaped Cython wr
 [**GitHub Releases**](https://github.com/sparsexlab/torch-amgx/releases).
 
 Each `(os, python)` ships **three CUDA variants** — cu12.4 / cu12.6 / cu12.8.
-Because the binary is compiled against `torch`'s C++ ABI for a specific CUDA
-toolkit, you **must pick the wheel whose CUDA matches your installed
-`torch`'s CUDA** (check `python -c "import torch; print(torch.version.cuda)"`).
-Installing a mismatched wheel fails at *import* time with a torch ABI error
-(`ImportError: DLL load failed while importing _C` on Windows, or an
-undefined-symbol error on Linux).
+The binary links `torch`'s C++ ABI, and that ABI is **not stable across torch
+minor releases**, so a wheel is tied to *both* a CUDA toolkit and a specific
+torch version. Both are in the **build tag**, right after the version:
 
-The CUDA variant is encoded in the wheel's **build tag** `0_cu124` /
-`0_cu126` / `0_cu128` (right after the version), e.g.
-`torch_amgx-<ver>-0_cu126-cp313-cp313-win_amd64.whl`. `pip install` its asset
-URL directly:
+```
+torch_amgx-<ver>-0_cu126_torch211-cp313-cp313-win_amd64.whl
+                 ^^^^^^ ^^^^^^^^
+                 CUDA   torch 2.11
+```
+
+Check what you have and pick the matching tag:
 
 ```bash
-# Example: Linux x86_64, Python 3.11, torch built for CUDA 12.6 -> 0_cu126
-pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a11/torch_amgx-0.1.0a11-0_cu126-cp311-cp311-manylinux_2_35_x86_64.whl
+python -c "import torch; print(torch.__version__, torch.version.cuda)"
+# e.g. 2.11.0+cu126 12.6  ->  0_cu126_torch211
+```
+
+Then `pip install` that asset URL directly:
+
+```bash
+# Linux x86_64, Python 3.11, torch 2.11.x built for CUDA 12.6
+pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a12/torch_amgx-0.1.0a2-0_cu126_torch211-cp311-cp311-manylinux_2_35_x86_64.whl
 ```
 
 ```bash
-# Example: Windows x64, Python 3.13, torch built for CUDA 12.4 -> 0_cu124
-pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a11/torch_amgx-0.1.0a11-0_cu124-cp313-cp313-win_amd64.whl
+# Windows x64, Python 3.13, torch 2.6.x built for CUDA 12.4
+pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a12/torch_amgx-0.1.0a2-0_cu124_torch26-cp313-cp313-win_amd64.whl
 ```
+
+> The package version in the filename (`0.1.0a2`) is the `pyproject.toml`
+> version and does **not** track the release tag (`v0.1.0a12`). Copy the URL
+> from the Releases page rather than editing one by hand.
+
+A wheel whose torch does not match yours usually fails at *import*, with an
+undefined-symbol error on Linux or `ImportError: DLL load failed while
+importing _C` on Windows. `torch_amgx` catches that and reports which torch
+the wheel was built against alongside the one you are running, so you can tell
+an ABI mismatch from a missing shared library at a glance.
 
 Or download the wheel from the Releases page and `pip install ./<file>.whl`.
 Browse the full asset list at
@@ -70,7 +87,7 @@ x = torch_amgx.solve_csr(A_csr_indptr, A_csr_indices, A_csr_values, shape, b)
 # Reusable solver (one setup, many RHS)
 cfg = torch_amgx.Config(method="pbicgstab", tol=1e-8, maxiter=200)
 solver = torch_amgx.Solver(cfg)
-solver.setup_csr(A_csr_indptr, A_csr_indices, A_csr_values, shape)
+solver.setup_csr(A_csr_indptr, A_csr_indices, A_csr_values, n)   # n, not shape
 for b in rhs_stream:
     x = solver.solve(b)              # warm; same matrix, new RHS
 ```

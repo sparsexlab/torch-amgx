@@ -1,4 +1,6 @@
 # Build artifacts
+# Written by setup.py at build time (torch version the binary links).
+torch_amgx/_build_info.py
 build/
 dist/
 *.egg-info/
