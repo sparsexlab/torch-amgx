@@ -46,13 +46,28 @@ jobs:
           #               probing (CI runners have no GPU -> device_count()==0
           #               -> IndexError in _get_cuda_arch_flags). Must MATCH
           #               the AmgX cuda_arch chosen for the same row.
+          # torch      -> the EXACT torch this row links against. Pinned on
+          #               purpose: the extension binds torch's C++ ABI, which
+          #               torch does not keep stable across minor releases, so
+          #               an unpinned `pip install torch` made a release's
+          #               wheels silently depend on whatever was newest that
+          #               day -- and on a different minor per CUDA row, since
+          #               the three indexes do not carry the same versions
+          #               (cu124 ends at 2.6.0, cu128 at 2.11.0, cu126 runs
+          #               ahead). The version is stamped into the wheel's
+          #               build tag (scripts/tag_wheel.py), so bumping a pin
+          #               here changes the filename users install. Values are
+          #               the newest each index carries; bump deliberately.
           - cuda: "12.4"
+            torch: "2.6.0"          # cu124 is EOL upstream: 2.6.0 is the last
             cuda_arch: "70;80;89;90;90-virtual"
             torch_arch: "7.0 8.0 8.9 9.0+PTX"
           - cuda: "12.6"
+            torch: "2.14.0"
             cuda_arch: "70;80;89;90;90-virtual"
             torch_arch: "7.0 8.0 8.9 9.0+PTX"
           - cuda: "12.8"
+            torch: "2.11.0"         # cu128 tops out here; newer torch is cu126/cu13
             cuda_arch: "70;80;89;90;100;120"
             torch_arch: "7.0 8.0 8.9 9.0 10.0 12.0"
     steps:
@@ -160,12 +175,16 @@ jobs:
       # with "The detected CUDA version (12.6) mismatches the version that
       # was used to compile PyTorch (13.0)". numpy is also required at
       # build time (torch import warns + downstream breaks without it).
+      #
+      # The version is pinned (matrix.torch) rather than floating: see the
+      # note in the matrix include block.
       - name: Install build tooling
         shell: bash
         run: |
           python -m pip install --upgrade pip wheel build
           CU_TAG="cu$(echo '${{ matrix.cuda }}' | tr -d '.')"   # 12.4 -> cu124
-          pip install --index-url "https://download.pytorch.org/whl/${CU_TAG}" torch
+          pip install --index-url "https://download.pytorch.org/whl/${CU_TAG}" \
+                      "torch==${{ matrix.torch }}"
           pip install numpy pybind11
           if [ "$RUNNER_OS" = "Linux" ]; then
             pip install auditwheel

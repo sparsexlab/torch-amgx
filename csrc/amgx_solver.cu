@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -65,6 +66,67 @@ AMGX_Mode mode_for_dtype(torch::ScalarType dtype) {
     throw std::runtime_error(oss.str());
 }
 
+// Process-wide AmgX Resources, one per CUDA device.
+//
+// AmgX's Resources destructor tears down process-GLOBAL singletons: the
+// cuSPARSE and cuBLAS handles, and the device memory pools via
+// amgx::free_resources() (AMGX src/resources.cu, Resources::~Resources).
+// Giving every AmgXSolver its own Resources therefore made destroying any one
+// of them invalidate every other live solver -- AmgX printed
+//
+//   !!! detected some memory leaks in the code: trying to free non-empty
+//       temporary device pool !!!
+//
+// and the next AmgX call died with "Cuda failure: 'invalid argument'", which
+// terminates the process. Two simultaneously-live solvers were enough to
+// trigger it, and a solver plus its adjoint is the normal case for callers
+// like torch-sla, whose solver cache keeps several alive at once.
+//
+// Resources is meant to be one per device per process, so we create it once,
+// share it, and release it in amgx_finalize_if_initialized(). Sharing is safe
+// because Resources reads only process-level settings from its config -- pool
+// sizes, num_streams, determinism_flag, verbosity_level, exception_handling
+// (AMGX src/resources.cu, Resources::Resources). Solver and preconditioner
+// settings never reach it; those go to AMGX_solver_create's own per-solver
+// config, which stays exactly as it was.
+struct SharedResources {
+    AMGX_config_handle    config    = nullptr;
+    AMGX_resources_handle resources = nullptr;
+};
+std::map<int, SharedResources> g_resources;   // keyed by CUDA device index
+
+// Caller must NOT hold g_init_mutex.
+AMGX_resources_handle acquire_shared_resources(int device_id) {
+    std::lock_guard<std::mutex> guard(g_init_mutex);
+    auto it = g_resources.find(device_id);
+    if (it != g_resources.end()) return it->second.resources;
+
+    SharedResources sr;
+    // A bare ``config_version=2`` document leaves every resource-level key at
+    // its AmgX default. Deliberately not the solver's config: solvers differ
+    // and the shared Resources must not depend on whichever one happened to
+    // be constructed first.
+    check_amgx(AMGX_config_create(&sr.config, "config_version=2"),
+               "AMGX_config_create (shared resources)");
+    check_amgx(AMGX_resources_create(&sr.resources, sr.config,
+                                     /*comm=*/nullptr,
+                                     /*device_num=*/1, &device_id),
+               "AMGX_resources_create");
+    g_resources.emplace(device_id, sr);
+    return sr.resources;
+}
+
+// Releases every shared Resources. Caller MUST hold g_init_mutex, and no
+// solver may still be alive -- each destructor takes down AmgX's global
+// cuSPARSE/cuBLAS handles and memory pools.
+void release_shared_resources_locked() {
+    for (auto& kv : g_resources) {
+        if (kv.second.resources) AMGX_resources_destroy(kv.second.resources);
+        if (kv.second.config)    AMGX_config_destroy(kv.second.config);
+    }
+    g_resources.clear();
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------- //
@@ -85,6 +147,7 @@ void amgx_initialize() {
 void amgx_finalize_if_initialized() {
     std::lock_guard<std::mutex> guard(g_init_mutex);
     if (!g_initialized.load()) return;
+    release_shared_resources_locked();
     AMGX_finalize_plugins();
     AMGX_finalize();
     g_initialized.store(false);
@@ -117,12 +180,13 @@ AmgXSolver::AmgXSolver(const std::string& config_str, torch::Device device)
         AMGX_config_create(&config_, config_str.c_str()),
         "AMGX_config_create");
 
-    // Resources are bound to a single GPU. AmgX takes a device id list +
-    // count; we pass the device index of the torch device.
-    int device_id = device.index();
-    check_amgx(
-        AMGX_resources_create_simple(&resources_, config_),
-        "AMGX_resources_create_simple");
+    // Resources are bound to a single GPU and shared process-wide; see the
+    // note on g_resources. An index-less device (torch.device("cuda")) falls
+    // back to 0, which is what AMGX_resources_create_simple used to do
+    // unconditionally.
+    const int device_id =
+        device.has_index() ? static_cast<int>(device.index()) : 0;
+    resources_ = acquire_shared_resources(device_id);
 }
 
 AmgXSolver::~AmgXSolver() {
@@ -131,11 +195,14 @@ AmgXSolver::~AmgXSolver() {
 
 void AmgXSolver::destroy_() {
     // Reverse-construction order. Guarded so partially-constructed solvers
-    // still clean up correctly.
-    if (solver_)    { AMGX_solver_destroy(solver_);       solver_    = nullptr; }
-    if (matrix_)    { AMGX_matrix_destroy(matrix_);       matrix_    = nullptr; }
-    if (resources_) { AMGX_resources_destroy(resources_); resources_ = nullptr; }
-    if (config_)    { AMGX_config_destroy(config_);       config_    = nullptr; }
+    // still clean up correctly. ``resources_`` is NOT destroyed here: it is
+    // the process-wide shared handle owned by g_resources and released only
+    // by amgx_finalize_if_initialized(). Destroying it per-solver is exactly
+    // the bug described above.
+    if (solver_) { AMGX_solver_destroy(solver_); solver_ = nullptr; }
+    if (matrix_) { AMGX_matrix_destroy(matrix_); matrix_ = nullptr; }
+    resources_ = nullptr;  // non-owning
+    if (config_) { AMGX_config_destroy(config_); config_ = nullptr; }
 }
 
 void AmgXSolver::setup_csr(const torch::Tensor& indptr,
