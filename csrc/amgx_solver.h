@@ -2,10 +2,14 @@
 // integration with PyTorch CUDA tensors.
 //
 // Lifecycle (RAII):
-//   AmgXSolver solver(config_str);     // creates Config + Resources + Solver
+//   AmgXSolver solver(config_str);     // creates Config + Solver + Matrix
 //   solver.setup_csr(...);             // uploads matrix, runs AmgX setup
 //   solver.solve(b, x);                // runs N V-cycles + Krylov iterations
-//   // destructor: destroy Solver, Matrix, Resources, Config in that order
+//   // destructor: destroy Solver, Matrix, Config in that order
+//
+// Resources are NOT per-solver: AmgX's Resources destructor tears down
+// process-global cuSPARSE/cuBLAS handles and memory pools, so one is shared
+// per device and released only by amgx_finalize(). See amgx_solver.cu.
 //
 // Initialization is global and handled at module load via `amgx_initialize()`
 // / `amgx_finalize()`. We deliberately do NOT register finalize with
@@ -91,6 +95,7 @@ private:
 
     // AmgX opaque handles (declared in amgx_c.h). nullptr until init.
     AMGX_config_handle    config_   = nullptr;
+    // Non-owning: the shared per-device handle (see amgx_solver.cu).
     AMGX_resources_handle resources_ = nullptr;
     AMGX_matrix_handle    matrix_   = nullptr;
     AMGX_solver_handle    solver_   = nullptr;
