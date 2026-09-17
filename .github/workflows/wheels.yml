@@ -56,14 +56,22 @@ jobs:
           #               (cu124 ends at 2.6.0, cu128 at 2.11.0, cu126 runs
           #               ahead). The version is stamped into the wheel's
           #               build tag (scripts/tag_wheel.py), so bumping a pin
-          #               here changes the filename users install. Values are
-          #               the newest each index carries; bump deliberately.
+          #               here changes the filename users install.
+          #
+          #               These are NOT simply "the newest each index carries".
+          #               torch 2.14's headers use default member initializers
+          #               on bit-fields, which MSVC rejects under /std:c++17
+          #               ("error C7582 ... requires at least '/std:c++20'"),
+          #               so pinning cu126 there broke every Windows cu12.6
+          #               build while Linux/gcc was happy. cu126 and cu128 are
+          #               therefore both on 2.11.0. Moving either past 2.11
+          #               means bumping the Windows cxx std in setup.py first.
           - cuda: "12.4"
             torch: "2.6.0"          # cu124 is EOL upstream: 2.6.0 is the last
             cuda_arch: "70;80;89;90;90-virtual"
             torch_arch: "7.0 8.0 8.9 9.0+PTX"
           - cuda: "12.6"
-            torch: "2.14.0"
+            torch: "2.11.0"
             cuda_arch: "70;80;89;90;90-virtual"
             torch_arch: "7.0 8.0 8.9 9.0+PTX"
           - cuda: "12.8"
@@ -187,7 +195,12 @@ jobs:
                       "torch==${{ matrix.torch }}"
           pip install numpy pybind11
           if [ "$RUNNER_OS" = "Linux" ]; then
-            pip install auditwheel
+            # patchelf from PyPI, not the runner's. ubuntu-22.04 ships 0.14.3
+            # and current auditwheel refuses anything below 0.14.5
+            # ("ValueError: patchelf 0.14.3 found. auditwheel repair requires
+            # patchelf >= 0.14.5"), which broke every Linux job the first time
+            # this tag was built. The wheel itself had compiled fine.
+            pip install auditwheel patchelf
           else
             pip install delvewheel
           fi
