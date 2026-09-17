@@ -37,17 +37,18 @@ Then `pip install` that asset URL directly:
 
 ```bash
 # Linux x86_64, Python 3.11, torch 2.11.x built for CUDA 12.6
-pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a12/torch_amgx-0.1.0a2-0_cu126_torch211-cp311-cp311-manylinux_2_35_x86_64.whl
+pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a13/torch_amgx-0.1.0a13-0_cu126_torch211-cp311-cp311-manylinux_2_35_x86_64.whl
 ```
 
 ```bash
 # Windows x64, Python 3.13, torch 2.6.x built for CUDA 12.4
-pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a12/torch_amgx-0.1.0a2-0_cu124_torch26-cp313-cp313-win_amd64.whl
+pip install https://github.com/sparsexlab/torch-amgx/releases/download/v0.1.0a13/torch_amgx-0.1.0a13-0_cu124_torch26-cp313-cp313-win_amd64.whl
 ```
 
-> The package version in the filename (`0.1.0a2`) is the `pyproject.toml`
-> version and does **not** track the release tag (`v0.1.0a12`). Copy the URL
-> from the Releases page rather than editing one by hand.
+> Up to and including `v0.1.0a12`, the package version in the filename
+> (`0.1.0a2`) did **not** track the release tag, so hand-edited URLs 404'd.
+> From `v0.1.0a13` the two agree. Copying the URL from the Releases page is
+> still the safe move.
 
 A wheel whose torch does not match yours usually fails at *import*, with an
 undefined-symbol error on Linux or `ImportError: DLL load failed while
