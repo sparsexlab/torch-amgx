@@ -69,4 +69,15 @@ __all__ = [
     "is_available",
     "amgx_version",
 ]
-__version__ = "0.1.0a2"
+# Read the version the package was installed as, rather than keeping a literal
+# in step with pyproject.toml by hand. The literal that used to live here said
+# 0.1.0a2 while the wheel was 0.1.0a14, which makes `torch_amgx.__version__`
+# report the *old* version and look like the install did not take.
+try:
+    from importlib.metadata import PackageNotFoundError as _PkgNotFound
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("torch-amgx")
+    del _pkg_version, _PkgNotFound
+except Exception:  # noqa: BLE001 -- a source tree that was never installed
+    __version__ = "0.0.0+unknown"
